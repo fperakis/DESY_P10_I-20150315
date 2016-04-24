@@ -12,14 +12,19 @@ import sys, os, re, time
 from matplotlib import pyplot as plt
 from scipy import optimize
 from cbf_handling import readcbf
+from plot_functions import img_class
 import hough_transform
 from optparse import OptionParser
 
 parser = OptionParser()
 parser.add_option("-f", "--file", action="store", type="string", dest="file",
                   help="File you wish to view", metavar="FILE.npy", default="")
+parser.add_option("-d", "--data", action="store", type="string", dest="data",
+                  help="Data you wish to view", metavar="water_xxxx", default="")
 parser.add_option("-m", "--mask", action="store", type="string", dest="mask",
                   help="Mask to apply to the loaded file", metavar="MASK.npy", default="")
+parser.add_option("-s", "--save", action="store", type="string", dest="save",
+                  help="Save file to filename (will add ending)", metavar="FILE", default="")
 parser.add_option("-v", "--verbose", action="store_true", dest="verbose",
                   help="Print additional stuff", default=False)
 
@@ -28,7 +33,9 @@ parser.add_option("-v", "--verbose", action="store_true", dest="verbose",
 # -- folder and filenames
 base_dir = '/Users/sellberg/kth/experiments/PETRA-III/P10-2016_Amorphous_ice_speckles/'
 data_dir ='data/raw/'
-dataname= 'water_0001'
+dataname = 'water_0001'
+if (options.data != ''):
+    dataname = options.data
 #base_dir = '/Volumes/Seagate Backup Plus Drive/DESY_april2016/'
 #data_dir ='data/raw/'
 #dataname= 'test_00041'
@@ -62,119 +69,104 @@ if (options.file == ''):
         i += 1
         if (options.verbose and i % 10 == 0):
             print "\tsummed %d images" % i
+            
+        # -- normalize
+        sum_norm = sum/i
+        sum_squared_norm = sum_squared/i
+
+        # -- standard deviation
+        stdev = np.sqrt(sum_squared_norm - sum_norm*sum_norm)
 else:
-    sum = np.load(options.file)
+    sum_norm = np.load(options.file)
+
+
+# -- save sum
+if (options.save != ''):
+    np.save(options.save + '_sum.npy', sum)
+    print "saved file: %s_sum.npy" % options.save
+    np.save(options.save + '_sum_squared.npy', sum_squared)
+    print "saved file: %s_sum_squared.npy" % options.save
+    np.save(options.save + '_mean.npy', sum_norm)
+    print "saved file: %s_mean.npy" % options.save
 
 # -- mask
 if (options.mask == ''):
     mask = np.ones(pilatus_shape).astype(np.bool)
     # -- threshold mask
-    thresholds = [1450, 5800] # thresholds to filter shadowed/hot pixels
-    mask = (mask & (sum >= thresholds[0]) & (sum <= thresholds[1]))
+    thresholds = [1450/604.0, 5800/604.0] # thresholds to filter shadowed/hot pixels
+    mask = (mask & (sum_norm >= thresholds[0]) & (sum_norm <= thresholds[1]))
+    if (options.save != ''):
+        np.save(options.save + '_mask.npy', mask)
+        print "saved file: %s_mask.npy" % options.save
+
 else:
     mask = np.load(options.mask)
 
 inverted_mask = mask.astype(np.int)*-1 + 1
-masked_sum = np.ma.masked_array(sum, mask=inverted_mask)
+if (options.file == ''):
+    masked_sum = np.ma.masked_array(sum, mask=inverted_mask)
+    masked_stdev = np.ma.masked_array(stdev, mask=inverted_mask)
+masked_sum_norm = np.ma.masked_array(sum_norm, mask=inverted_mask)
 
-# -- center fit optimizing ring intensity and width
-#c_estimate = (-800, 310)
-c_estimate = (-700, 310)
-#c_estimate = (0, 310)
-print "original center:", c_estimate
-x, y = hough_transform.calc_XY(*c_estimate)
-hx, hy = hough_transform.circular_hough(masked_sum, x, y, r_min=800, r_max=1100, c_min=-100, c_max=100, c_delta=10)
-#c_estimate = (c_estimate[0] - hx, c_estimate[1] - hy) # this appears to be wrong sign, since calc_XY and calc_R treats shifts the same way
-c_estimate = (c_estimate[0] + hx, c_estimate[1] + hy)
-print "updated center:", c_estimate
-x, y = hough_transform.calc_XY(*c_estimate)
-hx, hy = hough_transform.circular_hough(masked_sum, x, y, r_min=800, r_max=1100)
-#c_estimate = (c_estimate[0] - hx, c_estimate[1] - hy)
-c_estimate = (c_estimate[0] + hx, c_estimate[1] + hy)
-print "updated center:", c_estimate
-# run minimization -- downhill simplex
-opt_params = optimize.fmin_powell(hough_transform.objective_func, c_estimate, args=(masked_sum,), xtol=1e-5, ftol=1e-5, disp=0)
-#[c, success] = optimize.leastsq(hough_transform.objective_func, c_estimate, args=masked_sum)
-#if (success):
-#    print "The optimized center is: ", c
-if (opt_params.any()):
-    print "The optimized parameters are: ", opt_params
-else:
-    "The fit failed, aborting..."
-    sys.exit(1)
-
-# plot stuff
-c_opt = (opt_params[0], opt_params[1])
+# -- center from water fit
+c_opt = (-621, 342) # (x, y) center in pixels from start of array
 x, y = hough_transform.calc_XY(*c_opt)
 r = hough_transform.calc_R(x, y)
-I, Ir = hough_transform.calc_I(r, masked_sum)
+I, Ir = hough_transform.calc_I(r, masked_sum_norm)
 
-fig = plt.figure()
+# plot stuff
+if (options.file != ''):
+    curr_img = img_class(options.file, masked_sum_norm, (Ir, I), c_opt)
+else:
+    curr_img = img_class(dataname, masked_sum_norm, (Ir, I), c_opt)
+    curr_std = img_class("standard deviation", masked_stdev, (Ir, I), c_opt)
+    curr_std.draw_img()
+curr_img.plot_img_and_radavg()
+
+"""
+fig = plt.figure(num=None, figsize=(11.5, 5), dpi=100, facecolor='w', edgecolor='k')
 
 canvas = fig.add_subplot(122)
-canvas.set_title('radial average - center (%.0f, %.0f)' % c_opt)
+canvas.set_title('radial average - (%.0f, %.0f)' % c_opt)
 plt.plot(Ir, I)
-plt.plot(Ir[I.argmax()], I.max(), 'ko')
-plt.plot(Ir[I.argmax() - 100], I[I.argmax() - 100], 'ko')
-plt.plot(Ir[I.argmax() + 100], I[I.argmax() + 100], 'ko')
+#plt.plot(Ir[I.argmax()], I.max(), 'ko')
+#plt.plot(Ir[I.argmax() - 100], I[I.argmax() - 100], 'ko')
+#plt.plot(Ir[I.argmax() + 100], I[I.argmax() + 100], 'ko')
 plt.xlabel('radius (pixels)')
-plt.ylabel('intensity (photons/pixel)')
+plt.ylabel('mean intensity (photons/pixel/shot)')
 
 canvas = fig.add_subplot(121)
-canvas.set_title(options.file)
-axes = plt.imshow(masked_sum, interpolation='nearest')
+if (options.file != ''):
+    canvas.set_title(options.file + ' - mean intensity (photons/pixel/shot)')
+else:
+    canvas.set_title(dataname + ' - mean intensity (photons/pixel/shot)')
+axes = plt.imshow(masked_sum_norm, interpolation='nearest')
 colbar = plt.colorbar(axes, pad=0.01)
 # approximate, center
 circ = plt.Circle(c_opt, radius=Ir[I.argmax()])
 circ.set_fill(False)
 circ.set_edgecolor('k')
 canvas.add_patch(circ)
-circ = plt.Circle(c_opt, radius=Ir[I.argmax() - 100])
-circ.set_fill(False)
-circ.set_edgecolor('k')
-canvas.add_patch(circ)
-circ = plt.Circle(c_opt, radius=Ir[I.argmax() + 100])
-circ.set_fill(False)
-circ.set_edgecolor('k')
-canvas.add_patch(circ)
+#circ = plt.Circle(c_opt, radius=Ir[I.argmax() - 100])
+#circ.set_fill(False)
+#circ.set_edgecolor('k')
+#canvas.add_patch(circ)
+#circ = plt.Circle(c_opt, radius=Ir[I.argmax() + 100])
+#circ.set_fill(False)
+#circ.set_edgecolor('k')
+#canvas.add_patch(circ)
 
-plt.show()
-
-"""
-from Fivos
-# -- mean photon count
-num_pixels = len(data.flatten())
-num_photons = np.sum(data.flatten())
-mean_photon_density = float(num_photons)/float(num_pixels)
-
-# -- photon histogram
-bi,bf,db = 1,100,1
-hy,hx = np.histogram(data,bins = np.arange(bi,bf,db)) 
-
-# -- Plots
-plt.figure(figsize=(12,7))
-
-# 2D plot
-plt.subplot(1,2,1)
-plt.imshow(np.log10(data),vmax= 4,vmin=2.5,interpolation='nearest')
-plt.title('%s_%d'%(dataname,start_number))
-
-# vertical average
-plt.subplot(2,2,2)
-plt.plot(np.mean(data,axis=0))
-plt.title('vertical average')
-plt.ylim([0,25])
-
-# histogram
-plt.subplot(2,2,4)
-plt.bar(hx[:-1]-db/2.,hy,width = db)
-plt.title('mean intensity: %.3f photons/pixel'%(mean_photon_density))
-plt.yscale('log',nonposy='clip')
-plt.xlabel('photons per pixel')
-plt.ylabel('number of pixels')
-plt.xlim([db/2.,100])
-
-plt.tight_layout()
+if (options.file != ''):
+    fig = plt.figure(num=None, figsize=(6.5, 5), dpi=100, facecolor='w', edgecolor='k')
+    canvas = fig.add_subplot(111)
+    canvas.set_title(dataname + ' - standard deviation (photons/pixel/shot)')
+    axes = plt.imshow(masked_stdev, interpolation='nearest')
+    colbar = plt.colorbar(axes, pad=0.01)
+    # approximate, center
+    circ = plt.Circle(c_opt, radius=Ir[I.argmax()])
+    circ.set_fill(False)
+    circ.set_edgecolor('k')
+    canvas.add_patch(circ)
 
 plt.show()
 """
