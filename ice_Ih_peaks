@@ -1,0 +1,18 @@
+# XRD data of ice Ih
+# --
+# taken from: L.G.Dowel and A.P.Rinfret, Nature 1960, 188, 1144
+# http://www.nature.com/nature/journal/v188/n4757/abs/1881144a0.html
+
+# Photon energy: E=8.05keV (copper anode)
+
+hkl     2theta(deg.)      q(A-1)        I/I0
+100     22.82             1.614         100
+002     24.26             1.714          75
+101
+102
+110
+103
+200
+112
+201
+202
